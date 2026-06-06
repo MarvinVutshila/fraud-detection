@@ -1,3 +1,4 @@
+# fraud_detection/database/postgres_db.py
 from __future__ import annotations
 import logging
 import psycopg2
@@ -88,7 +89,13 @@ class Database:
                 cur.execute(sql, params)
                 return cur.fetchone()[0]
 
+    # === New methods for frontend and overrides ===
+
     def get_transactions(self, limit: int = 100, offset: int = 0, decision: Optional[str] = None) -> List[dict]:
+        """
+        Fetch recent transactions with optional decision filter.
+        Returns a list of dictionaries.
+        """
         if decision:
             sql = "SELECT * FROM transactions WHERE decision = %s ORDER BY timestamp DESC LIMIT %s OFFSET %s;"
             params = (decision.upper(), limit, offset)
@@ -102,6 +109,10 @@ class Database:
         return [dict(row) for row in rows]
 
     def get_transaction(self, transaction_id: str) -> Optional[dict]:
+        """
+        Fetch a single transaction by its transaction_id.
+        Returns a dictionary or None.
+        """
         sql = "SELECT * FROM transactions WHERE transaction_id = %s;"
         with psycopg2.connect(self.dsn) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -110,6 +121,10 @@ class Database:
         return dict(row) if row else None
 
     def get_override(self, transaction_id: str) -> Optional[dict]:
+        """
+        Fetch the override record for a given transaction.
+        Returns a dictionary or None.
+        """
         sql = "SELECT * FROM transaction_overrides WHERE transaction_id = %s;"
         with psycopg2.connect(self.dsn) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
@@ -119,6 +134,9 @@ class Database:
 
     def set_override(self, transaction_id: str, original_decision: str, new_decision: str,
                      overridden_by: str, reason: str) -> None:
+        """
+        Insert or update an override for a transaction.
+        """
         sql = """
             INSERT INTO transaction_overrides (transaction_id, original_decision, new_decision, overridden_by, reason)
             VALUES (%s, %s, %s, %s, %s)
@@ -133,23 +151,3 @@ class Database:
             with conn.cursor() as cur:
                 cur.execute(sql, (transaction_id, original_decision, new_decision, overridden_by, reason))
             conn.commit()
-
-
-from psycopg2.pool import SimpleConnectionPool
-
-# Connection pool (min=1, max=20)
-_pool = None
-
-def get_pool():
-    global _pool
-    if _pool is None:
-        _pool = SimpleConnectionPool(1, 20, dsn=DATABASE_URL)
-    return _pool
-
-def get_connection():
-    """Get a connection from the pool."""
-    return get_pool().getconn()
-
-def return_connection(conn):
-    """Return connection to the pool."""
-    get_pool().putconn(conn)

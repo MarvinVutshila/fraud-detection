@@ -1,208 +1,162 @@
-# 💳 Fraud Detection System (Machine Learning + Streamlit + FastAPI)
+markdown
+# 🛡️ Fraud Detection System – Production ML + API + Dashboard
 
-A production-style machine learning system for detecting fraudulent credit card transactions using XGBoost, Random Forest, Logistic Regression, and SHAP explainability.
+End‑to‑end fraud detection using **XGBoost** (trained on the Kaggle Credit Card Fraud dataset), served via **FastAPI**, with a **Streamlit** dashboard and **PostgreSQL** for history. Fully containerised and deployable for free on Render + Neon + Streamlit Cloud.
 
----
+## 🎯 Real System Architecture
 
-## 🚀 Project Overview
+This is exactly what you built and tested:
 
-This project detects fraudulent transactions using a trained ML pipeline built on the **Kaggle Credit Card Fraud Detection dataset**.
+```mermaid
+flowchart LR
+    User[User / CSV] --> Dashboard[Streamlit Dashboard]
+    Dashboard --> API[FastAPI Backend]
+    API --> DB[(PostgreSQL / Neon)]
+    API --> Model[Trained XGBoost Model]
+    Model --> SHAP[SHAP Explanations]
+    DB --> Dashboard
+Important – the model uses the full 30 features of the original dataset:
 
-It includes:
+Time (seconds) → derived Hour, Hour_sin, Hour_cos
 
-- 🧠 Machine Learning models (XGBoost, Random Forest, Logistic Regression)
-- ⚖️ SMOTE-based class balancing
-- 📊 Performance evaluation (ROC-AUC, F1, Precision, Recall)
-- 📉 Threshold optimization for fraud detection
-- 🔍 SHAP explainability for model interpretation
-- 🌐 Streamlit dashboard for real-time predictions
-- ⚡ FastAPI backend for serving predictions
+Amount → Log_Amount, Amount_Q (quantile bin)
 
----
+V1 … V28 (PCA‑anonymised features)
 
-## 📁 Project Structure
+→ Your API requires V1‑V28. They are not set to zero. The dashboard sends them from your CSV.
 
-```
+📁 Project Structure (real)
+text
 fraud_detection/
 ├── data/
-│   └── creditcard.csv
-├── models/
+│   └── creditcard.csv               # original dataset (not needed for deployment)
+├── models_store/                    # trained artefacts
+│   ├── best_model.pkl               # XGBoost model
 │   ├── scaler.pkl
-│   ├── xgboost.pkl
-│   ├── logistic_regression.pkl
-│   ├── random_forest.pkl
-│   ├── optimal_threshold.npy
-│   └── feature_names.json
-├── outputs/
-│   ├── confusion_matrix plots
-│   ├── roc_curves
-│   └── SHAP explanations
-├── api/
-│   ├── fraud_api.py
-│   └── sample_transaction.json
-├── dashboard/
-│   └── app.py
-├── 01_eda.py
-├── 02_preprocessing_and_modelling.py
+│   ├── amount_bins.pkl
+│   ├── feature_names.pkl
+│   └── optimal_threshold.pkl
+├── fraud_detection/                 # main package
+│   ├── api/routes.py                # FastAPI endpoints
+│   ├── core/config.py
+│   ├── database/postgres_db.py
+│   ├── models/model_loader.py
+│   ├── services/                    # prediction, decision, storage
+│   └── utils/                       # feature engineering, SHAP
+├── dashboard/app.py                 # Streamlit frontend
+├── main.py                          # FastAPI entry point
+├── train.py                         # training with SMOTE + XGBoost
 ├── requirements.txt
+├── runtime.txt                      # python-3.11.0
 └── README.md
-```
+🧠 Model Performance (on test set)
+Metric	Value
+ROC‑AUC	0.9816
+F1 (optimal threshold 0.9244)	0.8677
+Recall at threshold 0.7	85.7%
+False positive rate (0.7)	0.07%
+→ Model is production‑ready for low‑false‑alarm fraud detection.
 
----
+🚀 Free Deployment (no credit card)
+We use three free services:
 
-## ⚠️ Important Architecture Note (VERY IMPORTANT)
+Component	Platform	Free limits
+API	Render	750 hours/month, spins down after 15 min idle
+Database	Neon	0.5 GB storage, serverless, scales to zero
+Dashboard	Streamlit Cloud	Unlimited public apps
+Step 1 – Neon Database
+Sign up at neon.tech (GitHub login).
 
-The original dataset contains:
+Create a project → copy the connection string (looks like postgresql://…).
 
-- V1 → V28 (PCA anonymised features)
-- Time
-- Amount
+Keep it – you'll need it for Render.
 
-### ❌ Problem
-In production, you cannot realistically provide V1–V28 features.
+Step 2 – Deploy FastAPI on Render
+Push your code to GitHub (e.g., MarvinVutshila/fraud-detection).
 
-Using:
-```
-V1–V28 = 0.0
-```
+Log into Render → New Web Service → connect repo.
 
-is **incorrect and unreliable**.
+Use these settings:
 
----
+Field	Value
+Name	fraud-detection-api
+Environment	Python
+Build Command	python -m pip install --upgrade pip setuptools wheel && pip install -r requirements.txt
+Start Command	uvicorn main:app --host 0.0.0.0 --port 10000
+Instance Type	Free
+Environment Variables (secrets):
 
-## ✅ Correct Production Design
+Key	Value
+DATABASE_URL	(the Neon connection string)
+API_KEY	changeme (or a strong random string)
+APPROVE_THRESHOLD	0.2
+BLOCK_THRESHOLD	0.7
+Click Create Web Service.
 
-The system must ONLY use features available at runtime:
+✅ After ~3‑5 minutes, your API is live at https://fraud-detection-api.onrender.com.
+Test: https://fraud-detection-api.onrender.com/health → {"status":"ok"}
 
-### Input Features
-- Amount (USD)
-- Time (seconds)
+Step 3 – Deploy Streamlit Dashboard on Streamlit Cloud
+Push dashboard/app.py to the same GitHub repo.
 
-### Derived Features (server-side)
-- Hour = Time / 3600
-- Log_Amount = log(Amount + 1)
+Go to Streamlit Cloud → New app → select repo, branch, and dashboard/app.py.
 
-### Final Feature Vector
-```
-[Hour, Log_Amount]
-```
+In Advanced settings → Secrets, add:
 
----
+text
+API_URL = "https://fraud-detection-api.onrender.com"
+API_KEY = "changeme"
+Click Deploy.
 
-## 🔄 System Architecture
+Your dashboard will be available at https://your-app-name.streamlit.app.
 
-```
-Streamlit UI
-     ↓
-FastAPI Backend
-     ↓
-Feature Engineering (Hour, Log_Amount)
-     ↓
-Trained ML Pipeline (XGBoost / RF)
-     ↓
-Fraud Probability Output
-     ↓
-Threshold Decision (Fraud / Legit)
-```
+🧪 Testing the Live System
+Upload a CSV with columns: Time, Amount, V1, V2, …, V28 (exactly as the original dataset).
 
----
+The dashboard sends a batch request to the API.
 
-## 📊 Model Performance
+The API returns fraud probability, decision (APPROVE / BLOCK), risk level, and SHAP explanations (if installed).
 
-### XGBoost (Best Model)
-- ROC-AUC: ~0.97
-- F1 Score: ~0.60
-- Precision (Fraud): ~0.46
-- Recall (Fraud): ~0.87
+Results are stored in Neon and displayed in the dashboard's history.
 
-### Random Forest
-- ROC-AUC: ~0.98
-- F1 Score: ~0.61
+🔁 Updating
+API: push changes → Render auto‑redeploys.
 
----
+Dashboard: push changes → Streamlit Cloud auto‑redeploys.
 
-## ⚙️ Installation
+Database: manage via Neon console.
+
+⚠️ Important Notes for Production
+Cold starts: Render spins down after 15 minutes – first request may take 30‑50 seconds.
+
+Never use Render's free PostgreSQL – it expires after 30 days. Always use Neon or Supabase.
+
+The model expects all V1‑V28 features – your CSV must include them (they are PCA components from the original dataset).
+In a real‑world deployment, you would replace V1‑V28 with actual banking features; this is a proof‑of‑concept using the Kaggle dataset.
+
+🛠 Troubleshooting
+Problem	Solution
+Build fails on Render	Ensure runtime.txt contains python-3.11.0 and Build Command includes pip install --upgrade pip setuptools wheel.
+ModuleNotFoundError	Check that all dependencies are in requirements.txt (especially psycopg2-binary).
+Database connection refused	Verify DATABASE_URL secret is correct; Neon database may be paused – resume it.
+API returns 500 on /predict	Look at Render logs – likely a missing model file or column name mismatch.
+📜 License
+Educational / research use only. Not for live financial systems without proper validation.
+
+👨‍💻 Author
+Marvin – Data Science & AI Engineer
+
+
+
+
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
----
+## Usage
 
-## ▶️ Running the Project
-
-### 1. Train Models
 ```bash
-python 02_preprocessing_and_modelling.py
+python main.py
 ```
-
-### 2. Start FastAPI Backend
-```bash
-python api/fraud_api.py
-```
-
-### 3. Start Streamlit Dashboard
-```bash
-streamlit run dashboard/app.py
-```
-
----
-
-## 🧪 Example Input
-
-```
-Amount: 500
-Time: 43200 (12:00 PM)
-```
-
-Derived:
-```
-Hour = 12
-Log_Amount = 6.216
-```
-
----
-
-## 🧠 Key Features
-
-- Real-time fraud scoring
-- Threshold tuning for business control
-- SHAP explainability (why transaction is flagged)
-- Lightweight model for laptop deployment
-- Optimized memory pipeline
-
----
-
-## 🛠 Tech Stack
-
-- Python
-- Scikit-learn
-- XGBoost
-- Pandas / NumPy
-- Streamlit
-- FastAPI
-- SHAP
-- Imbalanced-learn (SMOTE)
-
----
-
-## 📌 Future Improvements
-
-- Replace PCA dataset with real banking features
-- Add transaction history features
-- Deploy on cloud (AWS / Azure)
-- Add real-time streaming (Kafka)
-- Model monitoring (drift detection)
-
----
-
-## ⚠️ Disclaimer
-
-This project is for educational and research purposes only.  
-It should not be used directly in real financial systems without proper validation and compliance checks.
-
----
-
-## 👨‍💻 Author
-
-Marvin — Data Science & AI Enthusiast

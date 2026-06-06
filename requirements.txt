@@ -33,3 +33,6 @@ xgboost==2.0.*
 scikit-learn==1.4.*   # needed for scaler (StandardScaler)
 pydantic==2.5.*
 python-dotenv==1.0.*
+
+python-jose==3.3.0
+cryptography==41.0.7

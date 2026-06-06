@@ -6,16 +6,16 @@ import numpy as np
 from fastapi import HTTPException
 
 from fraud_detection.core.config import MAX_KNOWN_AMOUNT, SHAP_TOP_N
-from fraud_detection.models.model_loader import ModelArtefacts
-from fraud_detection.models.schemas import (
+from fraud_detection.ml.inference.model_loader import ModelArtefacts
+from fraud_detection.schemas import (
     ExplanationOutput,
     PredictionResponse,
     TransactionRequest,
 )
-from fraud_detection.services.decision_service import DecisionService
-from fraud_detection.services.storage_service import StorageService
-from fraud_detection.utils.feature_engineering import engineer_features
-from fraud_detection.utils.shap_explainer import SHAPExplainer
+from fraud_detection.application.services.decision_service import DecisionService
+from fraud_detection.infrastructure.repositories.postgres_transaction_repository import StorageService
+from fraud_detection.ml.feature_engineering import engineer_features
+from fraud_detection.ml.inference.explainability import SHAPExplainer
 
 logger = logging.getLogger(__name__)
 
