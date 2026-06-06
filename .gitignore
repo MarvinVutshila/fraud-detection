@@ -10,8 +10,8 @@ __pycache__/
 *.pyc
 
 # Model store (large binary files – keep only if small, but generally exclude)
-models_store/
-*.pkl
+# models_store/
+# *.pkl
 
 # Training data & outputs
 data/
