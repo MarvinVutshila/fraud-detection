@@ -13,17 +13,22 @@ import random
 from datetime import datetime
 import os
 
-API_BASE = "http://localhost:8000"
-USERNAME = "analyst"
-PASSWORD = "analyst123"
+# ------------------------------------------------------------------
+# Environment variables (do not hardcode secrets!)
+# ------------------------------------------------------------------
+API_BASE = os.getenv("API_BASE", "http://localhost:8000")
+USERNAME = os.getenv("STREAM_USERNAME", "analyst")
+PASSWORD = os.getenv("STREAM_PASSWORD")
+if not PASSWORD:
+    raise ValueError("STREAM_PASSWORD environment variable not set. Please set it before running.")
 
 # Configuration
-REVIEW_RATIO = 0.8          # 80% REVIEW to stress the queue
-NORMAL_RATIO = 0.1
-FRAUD_RATIO = 0.1
-INTERVAL_RANGE = (1.0, 3.0)  # seconds between transactions
-CSV_PATH = "data/creditcard.csv"
-MAX_BATCH_SIZE = 2000        # how many rows to pre‑compute
+REVIEW_RATIO = float(os.getenv("REVIEW_RATIO", "0.8"))
+NORMAL_RATIO = float(os.getenv("NORMAL_RATIO", "0.1"))
+FRAUD_RATIO = float(os.getenv("FRAUD_RATIO", "0.1"))
+INTERVAL_RANGE = tuple(map(float, os.getenv("INTERVAL_RANGE", "1.0,3.0").split(',')))
+CSV_PATH = os.getenv("CSV_PATH", "data/creditcard.csv")
+MAX_BATCH_SIZE = int(os.getenv("MAX_BATCH_SIZE", "2000"))
 
 # Pre‑computed pools
 review_pool = []   # (row, probability)
