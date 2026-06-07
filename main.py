@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     # 2. Create tables (if they don't exist)
     create_tables()
 
-    # 3. Create a SINGLE Database instance (reused for all requests)
+    # 3. Create a SINGLE Database instance (no argument – uses global pool)
     db = Database()
 
     logger.info("Loading model artefacts…")
