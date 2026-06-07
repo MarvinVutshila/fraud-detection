@@ -11,3 +11,20 @@ def get_services():
     if _services is None:
         raise HTTPException(status_code=503, detail="Services not initialised")
     return _services
+
+class UserContext:
+    def __init__(self, username: str, role: str):
+        self.username = username
+        self.role = role
+
+def get_current_user(payload: dict = Depends(verify_token)):
+    username = payload.get("sub")
+    role = payload.get("role", "analyst")
+    if not username:
+        raise HTTPException(401, "Invalid token")
+    return UserContext(username, role)
+
+def get_current_admin(current_user: UserContext = Depends(get_current_user)):
+    if current_user.role != "admin":
+        raise HTTPException(403, "Admin access required")
+    return current_user
