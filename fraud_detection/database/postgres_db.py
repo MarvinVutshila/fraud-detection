@@ -37,6 +37,41 @@ CREATE TABLE IF NOT EXISTS transaction_overrides (
 );
 """
 
+CREATE_USERS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS users (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT UNIQUE NOT NULL,
+    password        TEXT NOT NULL,
+    role            TEXT DEFAULT 'analyst',
+    status          TEXT DEFAULT 'pending',
+    avatar_url      TEXT,
+    failed_attempts INTEGER DEFAULT 0,
+    lock_until      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+CREATE_LOGIN_LOGS_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS login_logs (
+    id          SERIAL PRIMARY KEY,
+    username    TEXT,
+    success     BOOLEAN,
+    ip          TEXT,
+    user_agent  TEXT,
+    timestamp   TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
+CREATE_USER_ACTIVITY_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS user_activity (
+    id          SERIAL PRIMARY KEY,
+    username    TEXT,
+    action      TEXT,
+    details     JSONB,
+    timestamp   TIMESTAMPTZ DEFAULT NOW()
+);
+"""
+
 # -------------------------------------------------------------------
 # Global connection pool (initialised once at startup)
 # -------------------------------------------------------------------
@@ -61,6 +96,9 @@ def create_tables() -> None:
         with conn.cursor() as cur:
             cur.execute(CREATE_TABLE_SQL)
             cur.execute(CREATE_OVERRIDES_TABLE_SQL)
+            cur.execute(CREATE_USERS_TABLE_SQL)
+            cur.execute(CREATE_LOGIN_LOGS_TABLE_SQL)
+            cur.execute(CREATE_USER_ACTIVITY_TABLE_SQL)
         conn.commit()
     logger.info("Database tables and indexes verified")
 
@@ -151,7 +189,6 @@ class Database:
 
     def get_transactions(self, limit: int = 100, offset: int = 0,
                          decision: Optional[str] = None) -> List[Dict[str, Any]]:
-        # Same as fetch_history – you can keep both or remove one
         return self.fetch_history(limit, offset, decision)
 
     def get_transaction(self, transaction_id: str) -> Optional[Dict[str, Any]]:
