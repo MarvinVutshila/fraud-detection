@@ -9,7 +9,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 /* ========== DESIGN TOKENS ========== */
-/* Force signup modal to show when open */
 #signupModal.open {
     opacity: 1 !important;
     pointer-events: all !important;
@@ -83,9 +82,39 @@ input,select,textarea{font-family:var(--font);color:var(--text);font-size:0.85re
 .tbl-scroll{overflow-x:auto}
 .chart-sub{font-size:0.7rem;color:var(--text-muted)}
 
+/* ========== DASHBOARD LOADING OVERLAY ========== */
+#dashLoadOverlay{
+  position:fixed;inset:0;z-index:8000;
+  background:var(--bg);
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.2rem;
+  opacity:1;pointer-events:all;
+  transition:opacity 0.4s ease;
+}
+#dashLoadOverlay.hidden{opacity:0;pointer-events:none;}
+#dashLoadOverlay.gone{display:none;}
+.dlo-shield{
+  width:64px;height:64px;border-radius:18px;
+  background:linear-gradient(135deg,var(--accent),var(--cyan));
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;
+  box-shadow:0 0 48px var(--accent-glow);
+  animation:pulseGlow 2s infinite;
+}
+.dlo-bar{
+  width:220px;height:4px;background:var(--surface3);border-radius:99px;overflow:hidden;
+}
+.dlo-fill{
+  height:100%;width:0%;
+  background:linear-gradient(90deg,var(--accent),var(--cyan));
+  border-radius:99px;
+  transition:width 0.4s ease;
+}
+.dlo-msg{font-size:0.82rem;color:var(--text-muted);font-family:var(--mono);}
+
 /* ========== LOGIN SCREEN ========== */
-#loginScreen{position:fixed;inset:0;z-index:9000;display:flex;background:var(--bg);transition:opacity 0.5s}
+#loginScreen{position:fixed;inset:0;z-index:9000;display:flex;background:var(--bg);transition:opacity 0.4s}
 #loginScreen.hidden{opacity:0;pointer-events:none}
+#loginScreen.gone{display:none}
 .login-left{
   flex:1;display:flex;flex-direction:column;justify-content:center;
   padding:4rem 5%;position:relative;
@@ -281,6 +310,13 @@ input,select,textarea{font-family:var(--font);color:var(--text);font-size:0.85re
 </style>
 </head>
 <body>
+
+<!-- ========== DASHBOARD LOADING OVERLAY ========== -->
+<div id="dashLoadOverlay" class="gone">
+  <div class="dlo-shield">🛡️</div>
+  <div class="dlo-bar"><div class="dlo-fill" id="dloFill"></div></div>
+  <div class="dlo-msg" id="dloMsg">Initialising dashboard…</div>
+</div>
 
 <!-- ========== LOGIN SCREEN ========== -->
 <div id="loginScreen">
@@ -742,21 +778,6 @@ input,select,textarea{font-family:var(--font);color:var(--text);font-size:0.85re
 <div class="toast-cont" id="toastCont"></div>
 
 <script>
-  function destroyCharts() {
-    if (charts.riskChart) {
-        charts.riskChart.destroy();
-        charts.riskChart = null;
-    }
-    if (charts.decChart) {
-        charts.decChart.destroy();
-        charts.decChart = null;
-    }
-    if (charts.trendChart) {
-        charts.trendChart.destroy();
-        charts.trendChart = null;
-    }
-}
-
 'use strict';
 
 // ============================================================
@@ -778,6 +799,23 @@ let histPage = 1;
 const HIST_SIZE = 25;
 let batchResults = [];
 let signupAvatarBase64 = null;
+
+// ============================================================
+// LOADING OVERLAY HELPERS
+// ============================================================
+function showDashLoad(msg, pct) {
+  const ov = document.getElementById('dashLoadOverlay');
+  ov.classList.remove('gone', 'hidden');
+  document.getElementById('dloMsg').textContent = msg || 'Loading…';
+  document.getElementById('dloFill').style.width = (pct || 0) + '%';
+}
+
+function hideDashLoad() {
+  const ov = document.getElementById('dashLoadOverlay');
+  ov.classList.add('hidden');
+  // Remove from layout after transition so it can't block clicks
+  setTimeout(() => ov.classList.add('gone'), 450);
+}
 
 // ============================================================
 // UTILITIES
@@ -816,6 +854,11 @@ function shortEmail(email) {
   return at > 0 ? email.substring(0, at) : email;
 }
 
+// Promise-based RAF yield — lets browser paint before continuing
+function nextFrame() {
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
 // ============================================================
 // THEME
 // ============================================================
@@ -830,8 +873,7 @@ function applyTheme(theme) {
   if (loginEmoji) loginEmoji.textContent = isDark ? '☀️' : '🌙';
   if (loginLabel) loginLabel.textContent = isDark ? 'Light mode' : 'Dark mode';
   if (Object.keys(charts).length) {
-    Object.values(charts).forEach(c => { try { c.destroy(); } catch(e){} });
-    charts = {};
+    destroyCharts();
     initCharts();
     updateCharts();
   }
@@ -858,7 +900,7 @@ async function authFetch(url, options = {}) {
 }
 
 // ============================================================
-// LOGIN
+// LOGIN  — spinner stays until dashboard is FULLY ready
 // ============================================================
 async function handleLogin(e) {
   e.preventDefault();
@@ -876,6 +918,7 @@ async function handleLogin(e) {
   }
 
   btn.classList.add('loading');
+
   try {
     const res = await fetch(API_BASE + '/auth/login', {
       method: 'POST',
@@ -883,6 +926,7 @@ async function handleLogin(e) {
       body: JSON.stringify({ username: email, password })
     });
     const data = await res.json();
+
     if (res.ok) {
       token = data.access_token;
       currentUserEmail = email;
@@ -890,76 +934,114 @@ async function handleLogin(e) {
       localStorage.setItem('fg_token', token);
       localStorage.setItem('fg_email', email);
 
-      // ✅ Hide login screen immediately (before bootApp)
-      document.getElementById('loginScreen').classList.add('hidden');
-      // Also show dashboard shell (in case bootApp fails)
-      document.getElementById('appShell').style.display = 'flex';
-
+      // Hand off to bootApp — spinner released inside bootApp when done
       await bootApp();
     } else {
       document.getElementById('loginErrMsg').textContent = data.detail || 'Invalid email or password';
       errEl.classList.add('show');
+      btn.classList.remove('loading');
     }
   } catch {
     document.getElementById('loginErrMsg').textContent = 'Network error — check API server';
     errEl.classList.add('show');
-  } finally {
     btn.classList.remove('loading');
   }
 }
 
 // ============================================================
-// BOOT APP - CORRECTED ORDER: initCharts BEFORE refreshLiveData
+// DESTROY CHARTS helper
+// ============================================================
+function destroyCharts() {
+  ['riskChart', 'decChart', 'trendChart'].forEach(k => {
+    if (charts[k]) { try { charts[k].destroy(); } catch(e){} charts[k] = null; }
+  });
+}
+
+// ============================================================
+// BOOT APP
+// Key fix: appShell shown → nextFrame() yields to browser paint
+//          → initCharts() → nextFrame() → data load → overlay off
 // ============================================================
 async function bootApp() {
+  const loginBtn = document.getElementById('loginBtn');
+
   try {
-    // Show dashboard shell, hide login screen
+    // 1. Show loading overlay immediately (before anything else)
+    showDashLoad('Preparing dashboard…', 10);
+
+    // 2. Reveal the app shell so canvas elements are in the DOM
     document.getElementById('appShell').style.display = 'flex';
-    document.getElementById('loginScreen').classList.add('hidden');
 
-    // Close any lingering modals
-    const signupModal = document.getElementById('signupModal');
-    if (signupModal) signupModal.classList.remove('open');
-    const overrideModal = document.getElementById('overrideModal');
-    if (overrideModal) overrideModal.classList.remove('open');
+    // 3. Yield TWO animation frames so the browser reflows/paints the shell
+    //    and canvas elements get real pixel dimensions before Chart.js touches them
+    await nextFrame();
+    await nextFrame();
 
-    // Set user display name
+    showDashLoad('Loading user info…', 25);
+
+    // 4. Set display names
     const displayName = currentUser || shortEmail(currentUserEmail);
     document.getElementById('topbarName').textContent = currentUserEmail || displayName;
     document.getElementById('loginAvatarName').textContent = displayName;
-
     const el = document.getElementById('apiBaseDisplay');
     if (el) el.textContent = API_BASE;
 
-    // Load user info (this will not break if something fails)
-    await loadCurrentUserInfo();
+    // 5. Close any stale modals
+    document.getElementById('signupModal')?.classList.remove('open');
+    document.getElementById('overrideModal')?.classList.remove('open');
 
-    // Restore avatar from localStorage if present
+    // 6. Restore avatar
     const savedAvatar = localStorage.getItem('fg_avatar');
     if (savedAvatar) {
       document.getElementById('topbarAvatar').src = savedAvatar;
       document.getElementById('loginAvatar').src = savedAvatar;
     }
 
-    // Initialize charts
+    // 7. Load user info (role, avatar from API)
+    await loadCurrentUserInfo();
+    showDashLoad('Initialising charts…', 45);
+
+    // 8. Another frame yield ensures the live page is visible before chart init
+    await nextFrame();
+
+    // 9. Init charts now that canvases are in a visible, measured layout
+    destroyCharts(); // safety: clear any leftover instances
     initCharts();
 
-    // Load data – this is the critical part
+    showDashLoad('Fetching transactions…', 65);
+
+    // 10. Fetch real data
     await refreshLiveData();
 
-    // Set up navigation and start auto-refresh
-    startAutoRefresh();
+    showDashLoad('Starting auto-refresh…', 88);
 
+    // 11. Wire up nav and start refresh loop
     document.querySelectorAll('.nav-item[data-page]').forEach(btn => {
-      btn.addEventListener('click', () => navigateTo(btn.dataset.page));
+      // Remove old listeners by cloning
+      const fresh = btn.cloneNode(true);
+      btn.parentNode.replaceChild(fresh, btn);
+      fresh.addEventListener('click', () => navigateTo(fresh.dataset.page));
     });
     navigateTo('live');
+    startAutoRefresh();
+
+    showDashLoad('Done!', 100);
+
+    // 12. One more frame, then hide login + overlay cleanly
+    await nextFrame();
+    document.getElementById('loginScreen').classList.add('hidden');
+    setTimeout(() => document.getElementById('loginScreen').classList.add('gone'), 450);
+    hideDashLoad();
+
   } catch (err) {
     console.error('bootApp error:', err);
-    showToast('Dashboard loading error: ' + err.message, 'error');
-    // Still force dashboard shell visible (better than blank screen)
-    document.getElementById('appShell').style.display = 'flex';
+    hideDashLoad();
+    showToast('Dashboard error: ' + err.message, 'error');
+    // Still show dashboard shell rather than blank screen
     document.getElementById('loginScreen').classList.add('hidden');
+  } finally {
+    // Always release the login button spinner
+    loginBtn?.classList.remove('loading');
   }
 }
 
@@ -978,20 +1060,17 @@ async function loadCurrentUserInfo() {
       document.getElementById('topbarRole').textContent =
         currentUserRole === 'admin' ? 'Administrator' : 'Fraud Analyst';
       showAdminNav(currentUserRole === 'admin');
-      // Safely handle avatar (might be null)
       if (info.avatar_url) {
         document.getElementById('topbarAvatar').src = info.avatar_url;
         document.getElementById('loginAvatar').src = info.avatar_url;
         localStorage.setItem('fg_avatar', info.avatar_url);
       }
     } else {
-      // If /auth/me fails, fallback to stored role
       currentUserRole = localStorage.getItem('fg_role') || 'analyst';
       showAdminNav(currentUserRole === 'admin');
     }
   } catch (err) {
     console.warn('loadCurrentUserInfo error:', err);
-    // Fallback to stored role
     currentUserRole = localStorage.getItem('fg_role') || 'analyst';
     showAdminNav(currentUserRole === 'admin');
   }
@@ -1010,11 +1089,10 @@ function logout() {
   localStorage.removeItem('fg_role');
   allTransactions = [];
   if (refreshTimer) clearInterval(refreshTimer);
+  destroyCharts();
   document.getElementById('appShell').style.display = 'none';
   const ls = document.getElementById('loginScreen');
-  ls.classList.remove('hidden');
-  ls.style.opacity = '1';
-  ls.style.pointerEvents = '';
+  ls.classList.remove('hidden', 'gone');
   document.getElementById('lgEmail').value = '';
   document.getElementById('lgPass').value = '';
   document.getElementById('loginErr').classList.remove('show');
@@ -1029,31 +1107,19 @@ function togglePwd(fieldId) {
 // SIGNUP MODAL
 // ============================================================
 window.openSignupModal = function() {
-    console.log("Opening signup modal");
-    const modal = document.getElementById('signupModal');
-    if (!modal) {
-        console.error("signupModal element not found!");
-        return;
-    }
-    // Clear fields
-    const suEmail = document.getElementById('su_email');
-    if (suEmail) suEmail.value = '';
-    const suPass = document.getElementById('su_pass');
-    if (suPass) suPass.value = '';
-    const suPass2 = document.getElementById('su_pass2');
-    if (suPass2) suPass2.value = '';
-    const signupErr = document.getElementById('signupErr');
-    if (signupErr) signupErr.classList.remove('show');
-    // Reset avatar
-    window.signupAvatarBase64 = null;
-    const avatarPreview = document.getElementById('signupAvatarPreview');
-    if (avatarPreview) {
-        avatarPreview.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23111929' width='100' height='100'/%3E%3Ctext y='.9em' x='50%25' text-anchor='middle' font-size='54'%3E👤%3C/text%3E%3C/svg%3E";
-    }
-    // Force modal open
-    modal.classList.add('open');
-    modal.style.opacity = '1';
-    modal.style.pointerEvents = 'all';
+  const modal = document.getElementById('signupModal');
+  if (!modal) return;
+  ['su_email','su_pass','su_pass2'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = '';
+  });
+  document.getElementById('signupErr')?.classList.remove('show');
+  window.signupAvatarBase64 = null;
+  const avatarPreview = document.getElementById('signupAvatarPreview');
+  if (avatarPreview) {
+    avatarPreview.src = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect fill='%23111929' width='100' height='100'/%3E%3Ctext y='.9em' x='50%25' text-anchor='middle' font-size='54'%3E👤%3C/text%3E%3C/svg%3E";
+  }
+  modal.classList.add('open');
 };
 
 function closeSignupModal() {
@@ -1093,7 +1159,6 @@ async function registerUser() {
   btn.disabled = true;
   btn.textContent = 'Creating…';
   try {
-    // Backend expects { username, password, avatar_url } where username is the email
     const body = { username: email, password, avatar_url: signupAvatarBase64 || null };
     const res = await fetch(API_BASE + '/auth/register', {
       method: 'POST',
@@ -1289,7 +1354,6 @@ async function loadApprovalQueue() {
       container.appendChild(div);
     }
   }
-  // Audit log
   const log = allTransactions.filter(t => t.overridden);
   const tbody = document.getElementById('approvalLogBody');
   if (!log.length) {
@@ -1772,36 +1836,55 @@ async function submitOverride() {
 // CHARTS
 // ============================================================
 function initCharts() {
-    // Destroy any existing charts to avoid "Canvas already in use" error
-    destroyCharts();
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const gridColor = isDark ? 'rgba(99,155,255,0.06)' : 'rgba(37,99,235,0.06)';
+  const tickColor = isDark ? '#6b80a8' : '#4d637f';
 
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    const gridColor = isDark ? 'rgba(99,155,255,0.06)' : 'rgba(37,99,235,0.06)';
-    const tickColor = isDark ? '#6b80a8' : '#4d637f';
+  const riskCtx = document.getElementById('riskChart')?.getContext('2d');
+  const decCtx  = document.getElementById('decChart')?.getContext('2d');
+  const trendCtx = document.getElementById('trendChart')?.getContext('2d');
 
-    const riskCtx = document.getElementById('riskChart')?.getContext('2d');
-    const decCtx = document.getElementById('decChart')?.getContext('2d');
-    const trendCtx = document.getElementById('trendChart')?.getContext('2d');
+  if (!riskCtx || !decCtx || !trendCtx) {
+    console.warn('Chart canvases not ready — will retry on next frame');
+    return false;
+  }
 
-    if (!riskCtx || !decCtx || !trendCtx) return;
+  charts.riskChart = new Chart(riskCtx, {
+    type: 'bar',
+    data: {
+      labels: ['LOW','MEDIUM','HIGH','CRITICAL'],
+      datasets: [{ label: 'Count', data: [0,0,0,0], backgroundColor: ['#10b981','#f59e0b','#ef4444','#8b5cf6'], borderRadius: 6 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { grid: { color: gridColor }, ticks: { color: tickColor } }, y: { grid: { color: gridColor }, ticks: { color: tickColor } } }
+    }
+  });
 
-    charts.riskChart = new Chart(riskCtx, {
-        type: 'bar',
-        data: { labels: ['LOW','MEDIUM','HIGH','CRITICAL'], datasets: [{ label: 'Count', data: [0,0,0,0], backgroundColor: ['#10b981','#f59e0b','#ef4444','#8b5cf6'], borderRadius: 6 }] },
-        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { color: gridColor }, ticks: { color: tickColor } }, y: { grid: { color: gridColor }, ticks: { color: tickColor } } } }
-    });
+  charts.decChart = new Chart(decCtx, {
+    type: 'doughnut',
+    data: {
+      labels: ['APPROVE','BLOCK','REVIEW'],
+      datasets: [{ data: [0,0,0], backgroundColor: ['#10b981','#ef4444','#f59e0b'], borderWidth: 0 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } }
+  });
 
-    charts.decChart = new Chart(decCtx, {
-        type: 'doughnut',
-        data: { labels: ['APPROVE','BLOCK','REVIEW'], datasets: [{ data: [0,0,0], backgroundColor: ['#10b981','#ef4444','#f59e0b'], borderWidth: 0 }] },
-        options: { responsive: true, maintainAspectRatio: false, cutout: '68%', plugins: { legend: { display: false } } }
-    });
+  charts.trendChart = new Chart(trendCtx, {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{ label: 'Fraud Probability', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.05)', fill: true, tension: 0.3, pointRadius: 2 }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { min:0, max:1, grid: { color: gridColor }, ticks: { color: tickColor } }, x: { grid: { color: gridColor }, ticks: { color: tickColor } } },
+      plugins: { legend: { display: false } }
+    }
+  });
 
-    charts.trendChart = new Chart(trendCtx, {
-        type: 'line',
-        data: { labels: [], datasets: [{ label: 'Fraud Probability', data: [], borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.05)', fill: true, tension: 0.3, pointRadius: 2 }] },
-        options: { responsive: true, maintainAspectRatio: false, scales: { y: { min:0, max:1, grid: { color: gridColor }, ticks: { color: tickColor } }, x: { grid: { color: gridColor }, ticks: { color: tickColor } } }, plugins: { legend: { display: false } } }
-    });
+  return true;
 }
 
 function setTrend(type, btn) {
@@ -1894,7 +1977,7 @@ async function testEndpoint(type) {
 }
 
 // ============================================================
-// INIT
+// INIT — restore session on page load
 // ============================================================
 (async function init() {
   const savedTheme = localStorage.getItem('fg_theme') || 'dark';
