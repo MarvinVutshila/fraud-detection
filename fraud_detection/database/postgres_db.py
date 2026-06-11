@@ -106,17 +106,39 @@ def create_tables() -> None:
 @contextmanager
 def get_connection():
     """
-    Context manager that returns a connection from the pool.
-    The connection is automatically returned to the pool when the block exits.
+    Context manager that returns a WORKING connection from the pool.
+    Tests the connection with a simple query; if dead, discards it and retries.
+    This solves the "SSL connection has been closed unexpectedly" error.
     """
     if _pool is None:
         raise RuntimeError("Database pool not initialised. Call init_db_pool() first.")
 
-    conn = _pool.getconn()
+    conn = None
+    max_attempts = 3
+    for attempt in range(max_attempts):
+        conn = _pool.getconn()
+        try:
+            # Test the connection – if dead, this will raise an exception
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+            # Connection is alive – exit loop
+            break
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            logger.warning(f"Bad connection (attempt {attempt+1}/{max_attempts}): {e}")
+            # Discard this dead connection – do NOT put it back into the pool
+            conn.close()
+            conn = None
+            if attempt == max_attempts - 1:
+                # After last attempt, re-raise as a runtime error
+                raise RuntimeError("Could not get a working database connection") from e
+            # Otherwise, continue loop to try a fresh connection
+            continue
+
     try:
         yield conn
     finally:
-        _pool.putconn(conn)
+        if conn is not None:
+            _pool.putconn(conn)
 
 
 # -------------------------------------------------------------------
