@@ -13,8 +13,8 @@ class StorageService:
 
     def store(self, transaction_id, amount, probability, decision, risk_level):
         """Store a single transaction (called by prediction_service)."""
-        from datetime import datetime
-        timestamp = datetime.utcnow()
+        from datetime import datetime, timezone
+        timestamp = datetime.now(timezone.utc)  # Use timezone-aware UTC
         return self.db.insert_transaction(
             transaction_id=transaction_id,
             amount=amount,
@@ -28,10 +28,14 @@ class StorageService:
         """Alias for compatibility with old history endpoint."""
         return self.db.fetch_history(limit, offset, decision)
 
-    # ===== New methods required by routes.py =====
     def get_transactions(self, limit: int = 50, offset: int = 0, decision: Optional[str] = None) -> List[dict]:
         """Return list of transactions (dicts) with pagination and optional decision filter."""
         return self.db.get_transactions(limit, offset, decision)
+
+    # ✅ ADD THIS METHOD
+    def count_transactions(self, decision_filter: Optional[str] = None) -> int:
+        """Return total number of transactions, optionally filtered by decision."""
+        return self.db.count_transactions(decision_filter)
 
     def get_transaction(self, transaction_id: str) -> Optional[dict]:
         """Fetch a single transaction by its transaction_id."""
