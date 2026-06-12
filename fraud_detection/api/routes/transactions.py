@@ -1,13 +1,13 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import Optional
 from fraud_detection.api.dependencies import get_services, verify_token
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 router = APIRouter()
 
 class OverrideRequest(BaseModel):
     new_decision: str   # "APPROVE" or "BLOCK"
-    reason: str
+    reason: str = Field(..., min_length=1, description="Reason is required")
 
 @router.get("/transactions")
 async def get_transactions(
@@ -17,12 +17,9 @@ async def get_transactions(
     user=Depends(verify_token)
 ):
     svc = get_services()
-    # Fetch paginated records
     records = svc.storage_service.get_transactions(limit, offset, decision)
-    # Get total count (for pagination)
     total = svc.storage_service.count_transactions(decision)
     
-    # Attach override info
     for rec in records:
         override = svc.storage_service.get_override(rec["transaction_id"])
         rec["overridden"] = override is not None
@@ -37,7 +34,6 @@ async def override_transaction(
     req: OverrideRequest,
     user=Depends(verify_token)
 ):
-    # Validate new_decision
     if req.new_decision not in ["APPROVE", "BLOCK"]:
         raise HTTPException(status_code=400, detail="new_decision must be APPROVE or BLOCK")
     
@@ -47,6 +43,7 @@ async def override_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
     
     try:
+        # 1. Store override in transaction_overrides table
         svc.storage_service.set_override(
             tx_id,
             original["decision"],
@@ -54,6 +51,8 @@ async def override_transaction(
             user["sub"],      # username from JWT
             req.reason
         )
+        # 2. Update main transaction's decision so it leaves the REVIEW queue
+        svc.storage_service.update_transaction_decision(tx_id, req.new_decision)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
     
