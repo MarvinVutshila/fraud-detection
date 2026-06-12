@@ -118,20 +118,15 @@ def get_connection():
     for attempt in range(max_attempts):
         conn = _pool.getconn()
         try:
-            # Test the connection – if dead, this will raise an exception
             with conn.cursor() as cur:
                 cur.execute("SELECT 1")
-            # Connection is alive – exit loop
             break
         except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
             logger.warning(f"Bad connection (attempt {attempt+1}/{max_attempts}): {e}")
-            # Discard this dead connection – do NOT put it back into the pool
             conn.close()
             conn = None
             if attempt == max_attempts - 1:
-                # After last attempt, re-raise as a runtime error
                 raise RuntimeError("Could not get a working database connection") from e
-            # Otherwise, continue loop to try a fresh connection
             continue
 
     try:
@@ -151,7 +146,6 @@ class Database:
     """
 
     def __init__(self) -> None:
-        """No DDL here – tables must already exist."""
         if _pool is None:
             raise RuntimeError("Database pool not initialised. Call init_db_pool() first.")
 
@@ -246,4 +240,12 @@ class Database:
             with conn.cursor() as cur:
                 cur.execute(sql, (transaction_id, original_decision, new_decision,
                                   overridden_by, reason))
+            conn.commit()
+
+    # ✅ NEW METHOD: Update the main transaction decision after override
+    def update_transaction_decision(self, transaction_id: str, new_decision: str) -> None:
+        sql = "UPDATE transactions SET decision = %s WHERE transaction_id = %s"
+        with get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (new_decision, transaction_id))
             conn.commit()
